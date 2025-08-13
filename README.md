@@ -68,7 +68,7 @@ DeviceProcessEvents
 
 ### 3. Searched the `DeviceProcessEvents` Table for Scheduled Task Creation
 
-Immediately after the script execution, at `2025-08-12T22:57:19.7959134Z`, a new process was launched: schtasks.exe, with arguments to create a scheduled task called WinUpdateCheck that runs cmd.exe as SYSTEM. This is a strong indicator of privilege escalation.
+Immediately after the script execution, at `2025-08-12T22:57:19.7959134Z`, a new process was launched: `schtasks.exe`, with arguments to create a scheduled task called WinUpdateCheck that runs `cmd.exe` as SYSTEM. This is a strong indicator of privilege escalation.
 
 
 **Query used to locate events:**
@@ -88,7 +88,7 @@ DeviceProcessEvents
 
 ### 4. Searched the `DeviceFileEvents` Table for Fake Log File
 
-At `2025-08-12T22:57:19.9881427Z`, the file task-run-log.txt was created in the Downloads directory. This was a simulated log file written by the malicious PowerShell script to imitate legitimate system activity.
+At `2025-08-12T22:57:19.9881427Z`, the file `task-run-log.txt` was created in the Downloads directory. This was a simulated log file written by the malicious PowerShell script to imitate legitimate system activity.
 
 
 **Query used to locate events:**
@@ -142,9 +142,9 @@ DeviceFileEvents
 
 ## Summary
 
-The user ecorp on the device phishingmb initiated a suspicious activity involving privilege escalation using PowerShell and scheduled tasks. A script named escalate-task.ps1 was created in the Downloads folder at 2025-08-12T22:56:46Z, designed to create a rogue scheduled task that executes cmd.exe as SYSTEM.
+The user ecorp on the device phishingmb initiated a suspicious activity involving privilege escalation using PowerShell and scheduled tasks. A script named escalate-task.ps1 was created in the Downloads folder at `2025-08-12T22:56:46Z`, designed to create a rogue scheduled task that executes `cmd.exe` as SYSTEM.
 The script was executed using PowerShell with execution policy bypass, which is often used to circumvent script restrictions. Immediately afterward, a scheduled task named WinUpdateCheck was created via schtasks.exe, configured to run with SYSTEM-level privileges. This indicates a deliberate attempt to elevate local privileges on the system.
-To conceal the activity, the script also generated a fake session log (task-run-log.txt) to simulate legitimate task scheduling behavior.
+To conceal the activity, the script also generated a fake session log (`task-run-log.txt`) to simulate legitimate task scheduling behavior.
 This chain of events reflects a clear privilege escalation attempt and demonstrates how adversaries may use built-in Windows utilities like PowerShell and Task Scheduler to gain elevated access without dropping external tools.
 
 
