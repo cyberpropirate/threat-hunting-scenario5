@@ -1,26 +1,28 @@
 # threat-hunting-scenario5
 # Official [Cyber Range](http://joshmadakor.tech/cyber-range) Project
 
-<img width="400" src="https://github.com/user-attachments/assets/44bac428-01bb-4fe9-9d85-96cba7698bee" alt="Tor Logo with the onion and a crosshair on it"/>
+<img width="3840" height="2095" alt="image" src="https://github.com/user-attachments/assets/fe5b5a65-c893-4de9-a0ce-77673ddf9142" />
 
-# Threat Hunt Report: Unauthorized TOR Usage
+# Threat Hunt Report: Unauthorized Privilege Escalation via Rogue Scheduled Task
 - [Scenario Creation](https://github.com/cyberpropirate/threat-hunting-scenario5/blob/main/threat-hunting-scenario-tor-event-creation.md)
 
 ## Platforms and Languages Leveraged
 - Windows 10 Virtual Machines (Microsoft Azure)
 - EDR Platform: Microsoft Defender for Endpoint
 - Kusto Query Language (KQL)
-- Tor Browser
+- schtasks.exe
 
 ##  Scenario
 
-Management suspects that some employees may be using TOR browsers to bypass network security controls because recent network logs show unusual encrypted traffic patterns and connections to known TOR entry nodes. Additionally, there have been anonymous reports of employees discussing ways to access restricted sites during work hours. The goal is to detect any TOR usage and analyze related security incidents to mitigate potential risks. If any use of TOR is found, notify management.
+Management issued a directive after a threat intelligence briefing revealed increased attacker use of "living off the land" techniques, specifically involving the abuse of native Windows utilities such as schtasks.exe to gain persistence or escalate privileges. Security analysts were tasked with proactively hunting for signs of rogue scheduled task creation, especially those configured to run as SYSTEM—a common hallmark of privilege escalation attacks.
+The goal of this threat hunt was to identify any unauthorized or suspicious scheduled task creations using legitimate tools like PowerShell and schtasks.exe, often seen in attacker lateral movement or persistence playbooks. Any evidence of privilege escalation would warrant immediate device isolation and escalation to security management.
+
 
 ### High-Level TOR-Related IoC Discovery Plan
 
-- **Check `DeviceFileEvents`** for any `tor(.exe)` or `firefox(.exe)` file events.
-- **Check `DeviceProcessEvents`** for any signs of installation or usage.
-- **Check `DeviceNetworkEvents`** for any signs of outgoing connections over known TOR ports.
+- **Check `DeviceProcessEvents`** for any PowerShell executions used to run the malicious script.
+- **Check `DeviceProcessEvents`** for scheduled task creation activity by looking for schtasks.exe commands involving SYSTEM privileges.
+- **Check `DeviceFileEvents`** for creation of malicious powershell script and a fake log file  used to simulate legitimate task output 
 
 ---
 
@@ -28,133 +30,128 @@ Management suspects that some employees may be using TOR browsers to bypass netw
 
 ### 1. Searched the `DeviceFileEvents` Table
 
-Searched for any file that had the string "tor" in it and discovered what looks like the user "employee" downloaded a TOR installer, did something that resulted in many TOR-related files being copied to the desktop, and the creation of a file called `tor-shopping-list.txt` on the desktop at `2024-11-08T22:27:19.7259964Z`. These events began at `2024-11-08T22:14:48.6065231Z`.
+At `2025-08-12T22:56:46.5568941Z`, a PowerShell script named `escalate-task.ps1` was created in the Downloads directory. This script was designed to escalate privileges by creating a scheduled task that runs `cmd.exe` as SYSTEM.
 
 **Query used to locate events:**
 
 ```kql
-DeviceFileEvents  
-| where DeviceName == "threat-hunt-lab"  
-| where InitiatingProcessAccountName == "employee"  
-| where FileName contains "tor"  
-| where Timestamp >= datetime(2024-11-08T22:14:48.6065231Z)  
-| order by Timestamp desc  
-| project Timestamp, DeviceName, ActionType, FileName, FolderPath, SHA256, Account = InitiatingProcessAccountName
+DeviceFileEvents
+| where FileName == "escalate-task.ps1"
+| where DeviceName == "phishingmb"
+| project Timestamp, DeviceName, FileName, FolderPath, ActionType
+
 ```
-<img width="1212" alt="image" src="https://github.com/user-attachments/assets/71402e84-8767-44f8-908c-1805be31122d">
+<img width="2382" height="1195" alt="{DBCA9CB5-A437-4FED-BF83-15A2CB5C5F2A}" src="https://github.com/user-attachments/assets/a6f8ee94-a9ab-45d3-bbf9-acd3814787d4" />
+
 
 ---
 
 ### 2. Searched the `DeviceProcessEvents` Table
 
-Searched for any `ProcessCommandLine` that contained the string "tor-browser-windows-x86_64-portable-14.0.1.exe". Based on the logs returned, at `2024-11-08T22:16:47.4484567Z`, an employee on the "threat-hunt-lab" device ran the file `tor-browser-windows-x86_64-portable-14.0.1.exe` from their Downloads folder, using a command that triggered a silent installation.
+At `2025-08-12T22:57:18.5192587Z` the user executed the `escalate-task.ps1` script using PowerShell with an execution policy bypass flag. This execution was captured in the telemetry as a custom PowerShell command.
 
 **Query used to locate event:**
 
 ```kql
 
-DeviceProcessEvents  
-| where DeviceName == "threat-hunt-lab"  
-| where ProcessCommandLine contains "tor-browser-windows-x86_64-portable-14.0.1.exe"  
-| project Timestamp, DeviceName, AccountName, ActionType, FileName, FolderPath, SHA256, ProcessCommandLine
+DeviceProcessEvents
+| where FileName == "powershell.exe"
+| where ProcessCommandLine has "escalate-task.ps1"
+| where DeviceName == "phishingmb"
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine
+
 ```
-<img width="1212" alt="image" src="https://github.com/user-attachments/assets/b07ac4b4-9cb3-4834-8fac-9f5f29709d78">
+<img width="2352" height="1109" alt="{489B2AC3-897D-426F-9BEF-AAD3EC078B8B}" src="https://github.com/user-attachments/assets/adeef65b-15e5-4b65-bfb1-e11a71a041a4" />
+
 
 ---
 
-### 3. Searched the `DeviceProcessEvents` Table for TOR Browser Execution
+### 3. Searched the `DeviceProcessEvents` Table for Scheduled Task Creation
 
-Searched for any indication that user "employee" actually opened the TOR browser. There was evidence that they did open it at `2024-11-08T22:17:21.6357935Z`. There were several other instances of `firefox.exe` (TOR) as well as `tor.exe` spawned afterwards.
+Immediately after the script execution, at `2025-08-12T22:57:19.7959134Z`, a new process was launched: schtasks.exe, with arguments to create a scheduled task called WinUpdateCheck that runs cmd.exe as SYSTEM. This is a strong indicator of privilege escalation.
+
 
 **Query used to locate events:**
 
 ```kql
-DeviceProcessEvents  
-| where DeviceName == "threat-hunt-lab"  
-| where FileName has_any ("tor.exe", "firefox.exe", "tor-browser.exe")  
-| project Timestamp, DeviceName, AccountName, ActionType, FileName, FolderPath, SHA256, ProcessCommandLine  
-| order by Timestamp desc
+DeviceProcessEvents
+| where FileName == "schtasks.exe"
+| where ProcessCommandLine has "WinUpdateCheck"
+| where DeviceName == "phishingmb"
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine
+
 ```
-<img width="1212" alt="image" src="https://github.com/user-attachments/assets/b13707ae-8c2d-4081-a381-2b521d3a0d8f">
+<img width="2326" height="1168" alt="{DD2E5A96-4197-453C-BC3B-FCB57B976CB8}" src="https://github.com/user-attachments/assets/a926dead-8040-4e3c-b1f8-4ae50e39f2e5" />
+
 
 ---
 
-### 4. Searched the `DeviceNetworkEvents` Table for TOR Network Connections
+### 4. Searched the `DeviceFileEvents` Table for Fake Log File
 
-Searched for any indication the TOR browser was used to establish a connection using any of the known TOR ports. At `2024-11-08T22:18:01.1246358Z`, an employee on the "threat-hunt-lab" device successfully established a connection to the remote IP address `176.198.159.33` on port `9001`. The connection was initiated by the process `tor.exe`, located in the folder `c:\users\employee\desktop\tor browser\browser\torbrowser\tor\tor.exe`. There were a couple of other connections to sites over port `443`.
+At `2025-08-12T22:57:19.9881427Z`, the file task-run-log.txt was created in the Downloads directory. This was a simulated log file written by the malicious PowerShell script to imitate legitimate system activity.
+
 
 **Query used to locate events:**
 
 ```kql
-DeviceNetworkEvents  
-| where DeviceName == "threat-hunt-lab"  
-| where InitiatingProcessAccountName != "system"  
-| where InitiatingProcessFileName in ("tor.exe", "firefox.exe")  
-| where RemotePort in ("9001", "9030", "9040", "9050", "9051", "9150", "80", "443")  
-| project Timestamp, DeviceName, InitiatingProcessAccountName, ActionType, RemoteIP, RemotePort, RemoteUrl, InitiatingProcessFileName, InitiatingProcessFolderPath  
-| order by Timestamp desc
+DeviceFileEvents
+| where FileName == "task-run-log.txt"
+| where ActionType == "FileCreated"
+| where DeviceName == "phishingmb"
+| project Timestamp, DeviceName, FileName, FolderPath, ActionType
+
 ```
-<img width="1212" alt="image" src="https://github.com/user-attachments/assets/87a02b5b-7d12-4f53-9255-f5e750d0e3cb">
+<img width="2376" height="1148" alt="{BF8DBBBC-1D1A-4332-8FA9-2D44B8799E85}" src="https://github.com/user-attachments/assets/20e18d26-17cd-4dbf-87b5-0626ea819e8c" />
+
 
 ---
 
 ## Chronological Event Timeline 
 
-### 1. File Download - TOR Installer
+### 1. File Creation - Privilege Escalation Script
 
-- **Timestamp:** `2024-11-08T22:14:48.6065231Z`
-- **Event:** The user "employee" downloaded a file named `tor-browser-windows-x86_64-portable-14.0.1.exe` to the Downloads folder.
-- **Action:** File download detected.
-- **File Path:** `C:\Users\employee\Downloads\tor-browser-windows-x86_64-portable-14.0.1.exe`
-
-### 2. Process Execution - TOR Browser Installation
-
-- **Timestamp:** `2024-11-08T22:16:47.4484567Z`
-- **Event:** The user "employee" executed the file `tor-browser-windows-x86_64-portable-14.0.1.exe` in silent mode, initiating a background installation of the TOR Browser.
-- **Action:** Process creation detected.
-- **Command:** `tor-browser-windows-x86_64-portable-14.0.1.exe /S`
-- **File Path:** `C:\Users\employee\Downloads\tor-browser-windows-x86_64-portable-14.0.1.exe`
-
-### 3. Process Execution - TOR Browser Launch
-
-- **Timestamp:** `2024-11-08T22:17:21.6357935Z`
-- **Event:** User "employee" opened the TOR browser. Subsequent processes associated with TOR browser, such as `firefox.exe` and `tor.exe`, were also created, indicating that the browser launched successfully.
-- **Action:** Process creation of TOR browser-related executables detected.
-- **File Path:** `C:\Users\employee\Desktop\Tor Browser\Browser\TorBrowser\Tor\tor.exe`
-
-### 4. Network Connection - TOR Network
-
-- **Timestamp:** `2024-11-08T22:18:01.1246358Z`
-- **Event:** A network connection to IP `176.198.159.33` on port `9001` by user "employee" was established using `tor.exe`, confirming TOR browser network activity.
-- **Action:** Connection success.
-- **Process:** `tor.exe`
-- **File Path:** `c:\users\employee\desktop\tor browser\browser\torbrowser\tor\tor.exe`
-
-### 5. Additional Network Connections - TOR Browser Activity
-
-- **Timestamps:**
-  - `2024-11-08T22:18:08Z` - Connected to `194.164.169.85` on port `443`.
-  - `2024-11-08T22:18:16Z` - Local connection to `127.0.0.1` on port `9150`.
-- **Event:** Additional TOR network connections were established, indicating ongoing activity by user "employee" through the TOR browser.
-- **Action:** Multiple successful connections detected.
-
-### 6. File Creation - TOR Shopping List
-
-- **Timestamp:** `2024-11-08T22:27:19.7259964Z`
-- **Event:** The user "employee" created a file named `tor-shopping-list.txt` on the desktop, potentially indicating a list or notes related to their TOR browser activities.
+- **Timestamp:** `2025-08-12T22:56:46.5568941Z`
+- **Event:** The user ecorp created a PowerShell script named `escalate-task.ps1` in the Downloads folder. This script was designed to create a rogue scheduled task that executes `cmd.exe` with SYSTEM privileges..
 - **Action:** File creation detected.
-- **File Path:** `C:\Users\employee\Desktop\tor-shopping-list.txt`
+- **File Path:** `C:\Users\ecorp\Downloads\escalate-task.ps1`
+
+### 2. Process Execution - Script Launched with Execution Policy Bypass
+
+- **Timestamp:** `2025-08-12T22:57:18.5192587Z`
+- **Event:** The user executed the `escalate-task.ps1` script using PowerShell with an execution policy bypass (-ExecutionPolicy Bypass). This is a common method to evade execution restrictions.
+- **Command:** `powershell.exe -ExecutionPolicy Bypass -File "C:\Users\ecorp\Downloads\escalate-task.ps1"`
+- **File Path:** `C:\Users\ecorp\Downloads\escalate-task.ps1`
+
+### 3. Process Execution - Scheduled Task Created
+
+- **Timestamp:** `2025-08-12T22:57:19.7959134Z`
+- **Event:** Immediately after executing the script, a new scheduled task named WinUpdateCheck was created using `schtasks.exe`. This task was configured to run `cmd.exe` under the SYSTEM context — a known technique for privilege escalation.
+- **Action:** Process creation using `schtasks.exe` detected.
+- **File Path:** `C:\Windows\System32\schtasks.exe`
+
+### 4. Fake Log File
+
+- **Timestamp:** `2025-08-12T22:57:19.9881427Z`
+- **Event:** A file named `task-run-log.txt` was created in the Downloads directory. This file simulates a log output of the scheduled task operation to mimic legitimate administrative activity and mask malicious intent.
+- **Action:** File Creation Detected.
+- **File Path:** `C:\Users\ecorp\Downloads\task-run-log.txt`
+
+
 
 ---
 
 ## Summary
 
-The user "employee" on the "threat-hunt-lab" device initiated and completed the installation of the TOR browser. They proceeded to launch the browser, establish connections within the TOR network, and created various files related to TOR on their desktop, including a file named `tor-shopping-list.txt`. This sequence of activities indicates that the user actively installed, configured, and used the TOR browser, likely for anonymous browsing purposes, with possible documentation in the form of the "shopping list" file.
+The user ecorp on the device phishingmb initiated a suspicious activity involving privilege escalation using PowerShell and scheduled tasks. A script named escalate-task.ps1 was created in the Downloads folder at 2025-08-12T22:56:46Z, designed to create a rogue scheduled task that executes cmd.exe as SYSTEM.
+The script was executed using PowerShell with execution policy bypass, which is often used to circumvent script restrictions. Immediately afterward, a scheduled task named WinUpdateCheck was created via schtasks.exe, configured to run with SYSTEM-level privileges. This indicates a deliberate attempt to elevate local privileges on the system.
+To conceal the activity, the script also generated a fake session log (task-run-log.txt) to simulate legitimate task scheduling behavior.
+This chain of events reflects a clear privilege escalation attempt and demonstrates how adversaries may use built-in Windows utilities like PowerShell and Task Scheduler to gain elevated access without dropping external tools.
+
 
 ---
 
 ## Response Taken
 
-TOR usage was confirmed on the endpoint `threat-hunt-lab` by the user `employee`. The device was isolated, and the user's direct manager was notified.
+Privilege escalation activity was confirmed on the endpoint phishingmb, executed by user ecorp. The malicious scheduled task was removed, and the device was isolated from the network to prevent further unauthorized access. The incident was escalated to the internal security team, and a forensic review of the user’s activity is currently underway. Additionally, endpoint detection rules were updated to alert on similar task creation patterns in the future.
 
 ---
